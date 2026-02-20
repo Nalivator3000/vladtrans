@@ -6,3 +6,12 @@ __pycache__/
 .venv/
 venv/
 *.egg-info/
+
+# Тестовые данные
+test_audio/*.mp3
+test_audio/*.wav
+test_audio/*.ogg
+test_audio/*.m4a
+test_audio/*.flac
+test_audio/*.webm
+test_audio/sent_calls.json

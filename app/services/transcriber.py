@@ -1,6 +1,8 @@
 import os
-import math
+import tempfile
 from pathlib import Path
+
+import httpx
 from openai import OpenAI
 
 client = OpenAI(api_key=os.environ["OPENAI_API_KEY"])
@@ -8,13 +10,44 @@ client = OpenAI(api_key=os.environ["OPENAI_API_KEY"])
 MAX_FILE_SIZE_MB = 24  # Whisper API limit is 25 MB
 
 
-def transcribe_audio(audio_path: str | Path) -> str:
+def transcribe_audio(audio_source: str | Path) -> str:
     """
-    Транскрибирует аудио файл через OpenAI Whisper API.
+    Транскрибирует аудио через OpenAI Whisper API.
+    Принимает либо локальный путь, либо HTTP(S) URL.
     Если файл > 24 MB — режет на чанки и склеивает транскрипты.
     Язык: грузинский (ka).
     """
-    audio_path = Path(audio_path)
+    source = str(audio_source)
+
+    if source.startswith("http://") or source.startswith("https://"):
+        return _transcribe_url(source)
+
+    return _transcribe_file(Path(source))
+
+
+def _transcribe_url(url: str) -> str:
+    """Скачивает аудио по URL во временный файл и транскрибирует."""
+    # Определяем расширение из URL (до query string)
+    clean_url = url.split("?")[0]
+    suffix = "." + clean_url.rsplit(".", 1)[-1] if "." in clean_url else ".mp3"
+    if len(suffix) > 5:  # нет расширения или оно странное — считаем mp3
+        suffix = ".mp3"
+
+    with httpx.Client(timeout=120) as http:
+        response = http.get(url)
+        response.raise_for_status()
+
+    with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
+        tmp.write(response.content)
+        tmp_path = Path(tmp.name)
+
+    try:
+        return _transcribe_file(tmp_path)
+    finally:
+        tmp_path.unlink(missing_ok=True)
+
+
+def _transcribe_file(audio_path: Path) -> str:
     file_size_mb = audio_path.stat().st_size / (1024 * 1024)
 
     if file_size_mb <= MAX_FILE_SIZE_MB:
@@ -40,12 +73,10 @@ def _transcribe_chunked(audio_path: Path) -> str:
     Требует ffmpeg в системе.
     """
     import subprocess
-    import tempfile
 
     chunks_dir = Path(tempfile.mkdtemp())
     chunk_pattern = str(chunks_dir / "chunk_%03d.mp3")
 
-    # Нарезаем по 600 секунд (10 минут)
     subprocess.run(
         [
             "ffmpeg", "-i", str(audio_path),
@@ -59,7 +90,6 @@ def _transcribe_chunked(audio_path: Path) -> str:
     chunks = sorted(chunks_dir.glob("chunk_*.mp3"))
     transcripts = [_transcribe_single(chunk) for chunk in chunks]
 
-    # Cleanup
     for chunk in chunks:
         chunk.unlink()
     chunks_dir.rmdir()
