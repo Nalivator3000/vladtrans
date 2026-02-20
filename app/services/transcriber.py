@@ -29,7 +29,7 @@ def _get_groq_client():
     """Создаёт Groq клиент. Требует GROQ_API_KEY в окружении."""
     try:
         from groq import Groq
-        return Groq(api_key=os.environ["GROQ_API_KEY"])
+        return Groq(api_key=os.environ["GROQ_API_KEY"], timeout=120.0)
     except ImportError:
         raise RuntimeError("groq package not installed. Run: pip install groq")
     except KeyError:
@@ -97,16 +97,20 @@ def _transcribe_single(audio_path: Path, language: str) -> str:
 def _normalize_audio(audio_path: Path) -> Path:
     """
     Перекодирует аудио в MP3 32kbps 16kHz mono через ffmpeg.
-    Решает две проблемы:
+    Попутно убирает начальную/конечную тишину и гудки (silenceremove).
+    Решает:
       1. Нестандартные форматы АТС (MPEG 2.5 @ 8kHz) — Groq их не принимает.
-      2. Размер файла — WAV 16kHz раздувается до ~46 МБ/24 мин (>лимита Groq 25 МБ),
-         MP3 32kbps даёт ~5.5 МБ/24 мин.
+      2. Размер: MP3 32kbps даёт ~5.5 МБ/24 мин vs ~46 МБ WAV.
+      3. Гудки/тишина в начале — они транскрибируются как мусор и портят оценку.
     """
     import subprocess
     out_path = audio_path.with_suffix(".norm.mp3")
     subprocess.run(
         [
             "ffmpeg", "-y", "-i", str(audio_path),
+            # Убираем тишину: старт после 2с тишины, конец после 3с тишины
+            "-af", "silenceremove=start_periods=1:start_duration=2:start_threshold=-50dB"
+                   ":stop_periods=1:stop_duration=3:stop_threshold=-50dB",
             "-ar", "16000", "-ac", "1", "-b:a", "32k",
             str(out_path),
         ],
@@ -149,8 +153,8 @@ def _transcribe_groq(audio_path: Path, language: str) -> str:
         # Контекстный промпт помогает Whisper точнее транскрибировать
         # и не путать языки в начале звонка (автодозвонщик на русском/английском)
         context_prompt = (
-            "Это запись телефонного разговора колл-центра на грузинском языке. "
-            "Оператор предлагает клиенту продукт для здоровья."
+            "Call center phone conversation. "
+            "Operator offers health products to a client."
         )
         transcripts = []
         prev_text = ""  # последний фрагмент предыдущего чанка для контекста
