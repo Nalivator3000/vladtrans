@@ -41,15 +41,13 @@ async def create_call(data: CallCreate, db: AsyncSession = Depends(get_db)):
 # --------------------------------------------------------------------------- #
 # POST /calls/upload  — загрузить аудио файл напрямую (для тестов)
 # --------------------------------------------------------------------------- #
-def _process_uploaded_file(call_id: int, tmp_path: str):
+async def _process_uploaded_file(call_id: int, tmp_path: str):
     """
     Фоновая задача для обработки загруженного файла.
-    Запускается в том же процессе что и API (без Celery) — нужно для тестов
-    когда воркер не поднят отдельно.
+    Async — FastAPI awaits её после отправки ответа, в том же event loop.
     """
-    import asyncio
     from app.tasks import _process_call_async
-    asyncio.run(_process_call_async(call_id, tmp_path))
+    await _process_call_async(call_id, tmp_path)
 
 
 @router.post("/upload", status_code=202)
