@@ -159,7 +159,7 @@ def _transcribe_groq(audio_path: Path, language: str) -> str:
             prompt = (context_prompt + " " + prev_text).strip()
             with open(chunk, "rb") as f:
                 result = client.audio.transcriptions.create(
-                    model="whisper-large-v3-turbo",
+                    model="whisper-large-v3",
                     file=("audio.mp3", f, "audio/mpeg"),
                     language=language,
                     response_format="text",
