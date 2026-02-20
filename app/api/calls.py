@@ -3,7 +3,7 @@ import tempfile
 from datetime import datetime
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, UploadFile
 from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -41,8 +41,20 @@ async def create_call(data: CallCreate, db: AsyncSession = Depends(get_db)):
 # --------------------------------------------------------------------------- #
 # POST /calls/upload  — загрузить аудио файл напрямую (для тестов)
 # --------------------------------------------------------------------------- #
+def _process_uploaded_file(call_id: int, tmp_path: str):
+    """
+    Фоновая задача для обработки загруженного файла.
+    Запускается в том же процессе что и API (без Celery) — нужно для тестов
+    когда воркер не поднят отдельно.
+    """
+    import asyncio
+    from app.tasks import _process_call_async
+    asyncio.run(_process_call_async(call_id, tmp_path))
+
+
 @router.post("/upload", status_code=202)
 async def upload_call(
+    background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
     order_id: str = Form(...),
     operator_id: int | None = Form(None),
@@ -52,7 +64,7 @@ async def upload_call(
 ):
     """
     Принимает аудио файл напрямую (multipart/form-data).
-    Сохраняет во временный файл и ставит в очередь на обработку.
+    Сохраняет во временный файл и обрабатывает в фоне (без Celery).
     Используется для тестов — в продакшене используй POST /calls/ с audio_url.
     """
     suffix = Path(file.filename).suffix or ".mp3"
@@ -74,8 +86,7 @@ async def upload_call(
     await db.commit()
     await db.refresh(call)
 
-    from app.tasks import process_call
-    process_call.delay(call.id, tmp_path)
+    background_tasks.add_task(_process_uploaded_file, call.id, tmp_path)
 
     return {"call_id": call.id, "status": "queued", "filename": file.filename}
 
@@ -118,11 +129,21 @@ async def get_call_results(call_id: int, db: AsyncSession = Depends(get_db)):
     )
     qr = qr_result.scalar_one_or_none()
 
-    if not call.transcript_text and qr is None:
-        return {"call_id": call_id, "status": "pending"}
+    status = call.processing_status or "pending"
 
-    if call.transcript_text and qr is None:
-        return {"call_id": call_id, "status": "processing"}
+    if status in ("pending", "processing"):
+        return {"call_id": call_id, "status": status}
+
+    if status == "error":
+        return {
+            "call_id": call_id,
+            "status": "error",
+            "error": call.processing_error,
+        }
+
+    if qr is None:
+        # processing_status=done но анкеты нет — что-то пошло не так
+        return {"call_id": call_id, "status": "error", "error": "Questionnaire missing after processing"}
 
     q_fields = [
         "q1_1", "q1_2", "q1_3",

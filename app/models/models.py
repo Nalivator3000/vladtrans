@@ -29,9 +29,11 @@ class Call(Base):
     operator_id     = Column(Integer, ForeignKey("operators.id"))
     call_date       = Column(TIMESTAMP(timezone=True), nullable=False, index=True)
     duration_sec    = Column(Integer)
-    audio_url       = Column(Text)
-    transcript_text = Column(Text)
-    created_at      = Column(TIMESTAMP(timezone=True), default=datetime.utcnow)
+    audio_url           = Column(Text)
+    transcript_text     = Column(Text)
+    processing_status   = Column(String(20), default="pending")   # pending/processing/done/error
+    processing_error    = Column(Text)
+    created_at          = Column(TIMESTAMP(timezone=True), default=datetime.utcnow)
 
     operator             = relationship("Operator", back_populates="calls")
     questionnaire        = relationship("QuestionnaireResponse", back_populates="call", uselist=False)

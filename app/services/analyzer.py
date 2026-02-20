@@ -1,8 +1,26 @@
 import json
+import logging
 import os
-from openai import OpenAI
+
+from openai import AuthenticationError, OpenAI, RateLimitError, APIError
 
 client = OpenAI(api_key=os.environ["OPENAI_API_KEY"])
+log = logging.getLogger(__name__)
+
+EXPECTED_FIELDS = {
+    "q1_1", "q1_2", "q1_3",
+    "q2_1", "q2_2", "q2_3",
+    "q3_1", "q3_2",
+    "q4_1", "q4_2", "q4_3", "q4_4",
+    "q5_1", "q5_2", "q5_3",
+    "q6_1", "q6_2", "q6_3",
+    "q7_1", "q7_2", "q7_3",
+    "q8_1", "q8_2", "q8_3",
+    "q9_1", "q9_2",
+    "q10_1", "q10_2",
+    "q11_1", "q11_2", "q11_3",
+    "q12_1", "q13_1", "q14_1",
+}
 
 SYSTEM_PROMPT = """Ты — аналитик качества звонков колл-центра.
 Тебе дают транскрипт телефонного разговора между оператором и клиентом.
@@ -100,17 +118,40 @@ QUESTIONNAIRE_PROMPT = """Оцени звонок по следующим кри
 
 def analyze_transcript(transcript: str) -> dict:
     """
-    Анализирует транскрипт звонка и возвращает заполненную анкету в виде словаря.
+    Анализирует транскрипт звонка и возвращает заполненную анкету.
+    Бросает RuntimeError при ошибках API (нет токенов, auth, quota и т.д.).
     """
-    response = client.chat.completions.create(
-        model="gpt-4o-mini",
-        messages=[
-            {"role": "system", "content": SYSTEM_PROMPT},
-            {"role": "user", "content": f"{QUESTIONNAIRE_PROMPT}\n\nТРАНСКРИПТ ЗВОНКА:\n{transcript}"},
-        ],
-        temperature=0,
-        response_format={"type": "json_object"},
-    )
+    try:
+        response = client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[
+                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "user", "content": f"{QUESTIONNAIRE_PROMPT}\n\nТРАНСКРИПТ ЗВОНКА:\n{transcript}"},
+            ],
+            temperature=0,
+            response_format={"type": "json_object"},
+        )
+    except AuthenticationError as e:
+        raise RuntimeError(f"OpenAI auth error (проверь OPENAI_API_KEY): {e}") from e
+    except RateLimitError as e:
+        raise RuntimeError(f"OpenAI rate limit / quota exceeded: {e}") from e
+    except APIError as e:
+        raise RuntimeError(f"OpenAI API error: {e}") from e
 
     raw = response.choices[0].message.content
-    return json.loads(raw)
+    log.debug(f"GPT raw response: {raw[:200]}")
+
+    try:
+        data = json.loads(raw)
+    except json.JSONDecodeError as e:
+        raise RuntimeError(f"GPT returned invalid JSON: {e}\nRaw: {raw[:500]}") from e
+
+    # Если GPT пропустил поля — заполняем None и логируем предупреждение
+    missing = EXPECTED_FIELDS - set(data.keys())
+    if missing:
+        log.warning(f"GPT response missing fields: {missing} — filling with None")
+        for field in missing:
+            data[field] = None
+
+    # Возвращаем только известные поля (защита от мусора в ответе)
+    return {k: v for k, v in data.items() if k in EXPECTED_FIELDS}
