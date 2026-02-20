@@ -30,6 +30,7 @@ class Call(Base):
     call_date       = Column(TIMESTAMP(timezone=True), nullable=False, index=True)
     duration_sec    = Column(Integer)
     audio_url           = Column(Text)
+    language            = Column(String(10), default="ka")        # ISO-639-1 язык звонка
     transcript_text     = Column(Text)
     processing_status   = Column(String(20), default="pending")   # pending/processing/done/error
     processing_error    = Column(Text)

@@ -13,19 +13,19 @@ log = logging.getLogger(__name__)
 
 
 @celery_app.task(bind=True, max_retries=3)
-def process_call(self, call_id: int, audio_path: str):
+def process_call(self, call_id: int, audio_path: str, language: str = "ka"):
     """
     Основная задача: транскрибирует звонок и заполняет анкету.
     Запускается асинхронно через Celery.
     """
     try:
-        asyncio.run(_process_call_async(call_id, audio_path))
+        asyncio.run(_process_call_async(call_id, audio_path, language))
     except Exception as exc:
         log.error(f"[call_id={call_id}] Task failed: {exc}", exc_info=True)
         raise self.retry(exc=exc, countdown=60)
 
 
-async def _process_call_async(call_id: int, audio_path: str):
+async def _process_call_async(call_id: int, audio_path: str, language: str = "ka"):
     async with AsyncSessionLocal() as db:
         call = await db.get(Call, call_id)
         if not call:
@@ -37,7 +37,7 @@ async def _process_call_async(call_id: int, audio_path: str):
         await db.commit()
 
         try:
-            transcript = transcribe_audio(audio_path)
+            transcript = transcribe_audio(audio_path, language)
         except Exception as exc:
             error_msg = f"Transcription failed: {exc}"
             log.error(f"[call_id={call_id}] {error_msg}", exc_info=True)

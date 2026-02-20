@@ -20,6 +20,7 @@ class CallCreate(BaseModel):
     call_date: datetime
     duration_sec: int | None = None
     audio_url: str
+    language: str = "ka"   # ISO-639-1, default грузинский
 
 
 # --------------------------------------------------------------------------- #
@@ -33,21 +34,21 @@ async def create_call(data: CallCreate, db: AsyncSession = Depends(get_db)):
     await db.refresh(call)
 
     from app.tasks import process_call
-    process_call.delay(call.id, data.audio_url)
+    process_call.delay(call.id, data.audio_url, data.language)
 
-    return {"call_id": call.id, "status": "queued"}
+    return {"call_id": call.id, "status": "queued", "language": data.language}
 
 
 # --------------------------------------------------------------------------- #
 # POST /calls/upload  — загрузить аудио файл напрямую (для тестов)
 # --------------------------------------------------------------------------- #
-async def _process_uploaded_file(call_id: int, tmp_path: str):
+async def _process_uploaded_file(call_id: int, tmp_path: str, language: str):
     """
     Фоновая задача для обработки загруженного файла.
     Async — FastAPI awaits её после отправки ответа, в том же event loop.
     """
     from app.tasks import _process_call_async
-    await _process_call_async(call_id, tmp_path)
+    await _process_call_async(call_id, tmp_path, language)
 
 
 @router.post("/upload", status_code=202)
@@ -58,6 +59,7 @@ async def upload_call(
     operator_id: int | None = Form(None),
     call_date: datetime = Form(...),
     duration_sec: int | None = Form(None),
+    language: str = Form("ka"),
     db: AsyncSession = Depends(get_db),
 ):
     """
@@ -79,14 +81,15 @@ async def upload_call(
         call_date=call_date,
         duration_sec=duration_sec,
         audio_url=f"local:{tmp_path}",
+        language=language,
     )
     db.add(call)
     await db.commit()
     await db.refresh(call)
 
-    background_tasks.add_task(_process_uploaded_file, call.id, tmp_path)
+    background_tasks.add_task(_process_uploaded_file, call.id, tmp_path, language)
 
-    return {"call_id": call.id, "status": "queued", "filename": file.filename}
+    return {"call_id": call.id, "status": "queued", "filename": file.filename, "language": language}
 
 
 # --------------------------------------------------------------------------- #
