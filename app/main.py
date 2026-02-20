@@ -10,4 +10,6 @@ app.include_router(outcomes.router,  prefix="/outcomes",  tags=["outcomes"])
 
 @app.get("/health")
 async def health():
-    return {"status": "ok"}
+    import subprocess
+    ffmpeg_ok = subprocess.run(["ffmpeg", "-version"], capture_output=True).returncode == 0
+    return {"status": "ok", "ffmpeg": ffmpeg_ok, "build": "e07aa3c"}
