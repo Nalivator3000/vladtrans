@@ -28,5 +28,9 @@ print('app.main OK')
 "
 
 echo ""
+echo "=== RUNNING DB MIGRATIONS ==="
+python scripts/init_db.py
+
+echo ""
 echo "=== STARTING UVICORN on port $PORT ==="
 exec uvicorn app.main:app --host 0.0.0.0 --port "${PORT:-8000}" --log-level debug
