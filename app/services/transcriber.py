@@ -94,40 +94,43 @@ def _transcribe_single(audio_path: Path, language: str) -> str:
         return _transcribe_openai_translation(audio_path)
 
 
-def _to_wav(audio_path: Path) -> Path:
+def _normalize_audio(audio_path: Path) -> Path:
     """
-    Конвертирует аудио в WAV 16kHz mono через ffmpeg.
-    Нужно для нестандартных форматов (MPEG 2.5, 8kHz) которые Groq не принимает.
+    Перекодирует аудио в MP3 32kbps 16kHz mono через ffmpeg.
+    Решает две проблемы:
+      1. Нестандартные форматы АТС (MPEG 2.5 @ 8kHz) — Groq их не принимает.
+      2. Размер файла — WAV 16kHz раздувается до ~46 МБ/24 мин (>лимита Groq 25 МБ),
+         MP3 32kbps даёт ~5.5 МБ/24 мин.
     """
     import subprocess
-    wav_path = audio_path.with_suffix(".wav")
+    out_path = audio_path.with_suffix(".norm.mp3")
     subprocess.run(
         [
             "ffmpeg", "-y", "-i", str(audio_path),
-            "-ar", "16000", "-ac", "1", "-f", "wav",
-            str(wav_path),
+            "-ar", "16000", "-ac", "1", "-b:a", "32k",
+            str(out_path),
         ],
         check=True,
         capture_output=True,
     )
-    return wav_path
+    return out_path
 
 
 def _transcribe_groq(audio_path: Path, language: str) -> str:
     """Транскрипция через Groq Whisper large-v3-turbo (поддерживает Georgian).
-    Перед отправкой конвертирует файл в WAV 16kHz — на случай нестандартных
-    форматов АТС (MPEG 2.5 @ 8kHz и др.).
+    Перед отправкой нормализует файл в MP3 32kbps 16kHz mono — фиксирует
+    нестандартные форматы АТС и не даёт файлу превысить лимит 25 МБ.
     """
     client = _get_groq_client()
 
-    wav_path = None
+    norm_path = None
     try:
         try:
-            wav_path = _to_wav(audio_path)
-            send_path = wav_path
-            log.info(f"Converted {audio_path.name} → WAV 16kHz for Groq")
+            norm_path = _normalize_audio(audio_path)
+            send_path = norm_path
+            log.info(f"Converted {audio_path.name} → MP3 32kbps 16kHz for Groq")
         except Exception as e:
-            log.warning(f"ffmpeg conversion failed ({e}), sending original file")
+            log.warning(f"ffmpeg normalization failed ({e}), sending original file")
             send_path = audio_path
 
         with open(send_path, "rb") as f:
@@ -138,8 +141,8 @@ def _transcribe_groq(audio_path: Path, language: str) -> str:
                 response_format="text",
             )
     finally:
-        if wav_path and wav_path.exists():
-            wav_path.unlink(missing_ok=True)
+        if norm_path and norm_path.exists():
+            norm_path.unlink(missing_ok=True)
 
     log.info(f"Groq transcription done for {audio_path.name}")
     return result
