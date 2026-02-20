@@ -4,8 +4,11 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
-    # OpenAI
+    # OpenAI (анализ анкеты через GPT)
     openai_api_key: str
+
+    # Groq (транскрипция Whisper large-v3, поддерживает Georgian)
+    groq_api_key: str
 
     # Database — Railway даёт postgresql://, нам нужен asyncpg драйвер
     database_url: str = "postgresql+asyncpg://vladtrans:vladtrans@db:5432/vladtrans"

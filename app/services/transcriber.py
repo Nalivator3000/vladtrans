@@ -4,33 +4,48 @@ import tempfile
 from pathlib import Path
 
 import httpx
-from openai import OpenAI
 
-client = OpenAI(api_key=os.environ["OPENAI_API_KEY"])
 log = logging.getLogger(__name__)
 
-MAX_FILE_SIZE_MB = 24  # Whisper API limit is 25 MB
+MAX_FILE_SIZE_MB = 24  # Whisper limit is 25 MB
 
-# Языки, поддерживаемые Whisper API как явный параметр.
-# Georgian ('ka') здесь отсутствует — для него используем translations endpoint.
-WHISPER_SUPPORTED_LANGUAGES = {
+# Groq поддерживает Georgian и ещё 98 языков (whisper-large-v3).
+# Для языков НЕ поддерживаемых Groq используем OpenAI translations → English.
+GROQ_SUPPORTED_LANGUAGES = {
     "af", "ar", "hy", "az", "be", "bs", "bg", "ca", "zh", "hr", "cs", "da",
     "nl", "en", "et", "fi", "fr", "gl", "de", "el", "he", "hi", "hu", "id",
     "it", "ja", "kn", "kk", "ko", "lv", "lt", "mk", "ms", "mr", "mi", "ne",
     "no", "fa", "pl", "pt", "ro", "ru", "sk", "sl", "es", "sw", "sv", "tl",
     "ta", "th", "tr", "uk", "ur", "vi", "cy",
+    # Языки поддерживаемые Groq но не OpenAI Whisper API:
+    "ka",   # Georgian
+    "mn",   # Mongolian
+    "si",   # Sinhala
+    "am",   # Amharic
 }
+
+
+def _get_groq_client():
+    """Создаёт Groq клиент. Требует GROQ_API_KEY в окружении."""
+    try:
+        from groq import Groq
+        return Groq(api_key=os.environ["GROQ_API_KEY"])
+    except ImportError:
+        raise RuntimeError("groq package not installed. Run: pip install groq")
+    except KeyError:
+        raise RuntimeError("GROQ_API_KEY not set in environment")
+
+
+def _get_openai_client():
+    from openai import OpenAI
+    return OpenAI(api_key=os.environ["OPENAI_API_KEY"])
 
 
 def transcribe_audio(audio_source: str | Path, language: str = "ka") -> str:
     """
-    Транскрибирует аудио через OpenAI Whisper API.
-    Принимает либо локальный путь, либо HTTP(S) URL.
-
-    Если язык не поддерживается Whisper API (напр. Georgian 'ka') —
-    использует /audio/translations (→ English перевод).
-    Если поддерживается — использует /audio/transcriptions с явным языком.
-
+    Транскрибирует аудио через Groq Whisper large-v3 (основной провайдер).
+    Если язык не поддерживается Groq — fallback на OpenAI translations → English.
+    Принимает локальный путь или HTTP(S) URL.
     Если файл > 24 МБ — нарезает на чанки через ffmpeg.
     """
     source = str(audio_source)
@@ -72,26 +87,39 @@ def _transcribe_file(audio_path: Path, language: str) -> str:
 
 
 def _transcribe_single(audio_path: Path, language: str) -> str:
-    use_translation = language not in WHISPER_SUPPORTED_LANGUAGES
+    if language in GROQ_SUPPORTED_LANGUAGES:
+        return _transcribe_groq(audio_path, language)
+    else:
+        log.warning(f"Language '{language}' not supported by Groq — falling back to OpenAI translations")
+        return _transcribe_openai_translation(audio_path)
 
+
+def _transcribe_groq(audio_path: Path, language: str) -> str:
+    """Транскрипция через Groq Whisper large-v3 (поддерживает Georgian)."""
+    client = _get_groq_client()
     with open(audio_path, "rb") as f:
-        if use_translation:
-            log.info(f"Language '{language}' not supported by Whisper API — using translations endpoint (→ English)")
-            result = client.audio.translations.create(
-                model="whisper-1",
-                file=f,
-                response_format="text",
-                prompt="This is a sales call from a call center. Operator sells health products to a client.",
-            )
-        else:
-            log.info(f"Using transcriptions endpoint with language='{language}'")
-            result = client.audio.transcriptions.create(
-                model="whisper-1",
-                file=f,
-                language=language,
-                response_format="text",
-            )
+        result = client.audio.transcriptions.create(
+            model="whisper-large-v3-turbo",
+            file=f,
+            language=language,
+            response_format="text",
+        )
+    log.info(f"Groq transcription done for {audio_path.name}")
+    return result
 
+
+def _transcribe_openai_translation(audio_path: Path) -> str:
+    """Fallback: OpenAI audio/translations → English (для неподдерживаемых языков)."""
+    from openai import OpenAI
+    client = OpenAI(api_key=os.environ["OPENAI_API_KEY"])
+    with open(audio_path, "rb") as f:
+        result = client.audio.translations.create(
+            model="whisper-1",
+            file=f,
+            response_format="text",
+            prompt="This is a sales call from a call center.",
+        )
+    log.info(f"OpenAI translation done for {audio_path.name}")
     return result
 
 
