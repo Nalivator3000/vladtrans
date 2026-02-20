@@ -117,7 +117,7 @@ def _normalize_audio(audio_path: Path) -> Path:
 
 
 def _transcribe_groq(audio_path: Path, language: str) -> str:
-    """Транскрипция через Groq Whisper large-v3 (поддерживает Georgian).
+    """Транскрипция через Groq Whisper large-v3-turbo (поддерживает Georgian).
     Перед отправкой нормализует файл в MP3 32kbps 16kHz mono — фиксирует
     нестандартные форматы АТС и не даёт файлу превысить лимит 25 МБ.
     """
@@ -135,7 +135,7 @@ def _transcribe_groq(audio_path: Path, language: str) -> str:
 
         with open(send_path, "rb") as f:
             result = client.audio.transcriptions.create(
-                model="whisper-large-v3",
+                model="whisper-large-v3-turbo",
                 file=f,
                 language=language,
                 response_format="text",
