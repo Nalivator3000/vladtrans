@@ -108,9 +108,9 @@ def _normalize_audio(audio_path: Path) -> Path:
     subprocess.run(
         [
             "ffmpeg", "-y", "-i", str(audio_path),
-            # Убираем тишину: старт после 2с тишины, конец после 3с тишины
-            "-af", "silenceremove=start_periods=1:start_duration=2:start_threshold=-50dB"
-                   ":stop_periods=1:stop_duration=3:stop_threshold=-50dB",
+            # Убираем только начальную тишину (до первого звука разговора).
+            # stop_periods намеренно не указан — иначе обрежет паузы внутри звонка.
+            "-af", "silenceremove=start_periods=1:start_duration=1:start_threshold=-40dB",
             "-ar", "16000", "-ac", "1", "-b:a", "32k",
             str(out_path),
         ],
