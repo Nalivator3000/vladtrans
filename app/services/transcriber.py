@@ -125,18 +125,13 @@ def _transcribe_groq(audio_path: Path, language: str) -> str:
 
     norm_path = None
     try:
-        try:
-            norm_path = _normalize_audio(audio_path)
-            send_path = norm_path
-            log.info(f"Converted {audio_path.name} → MP3 32kbps 16kHz for Groq")
-        except Exception as e:
-            log.warning(f"ffmpeg normalization failed ({e}), sending original file")
-            send_path = audio_path
+        norm_path = _normalize_audio(audio_path)
+        log.info(f"Converted {audio_path.name} → MP3 32kbps 16kHz ({norm_path.stat().st_size / 1024:.0f} KB)")
 
-        with open(send_path, "rb") as f:
+        with open(norm_path, "rb") as f:
             result = client.audio.transcriptions.create(
                 model="whisper-large-v3",
-                file=f,
+                file=(norm_path.name, f, "audio/mpeg"),
                 language=language,
                 response_format="text",
             )
