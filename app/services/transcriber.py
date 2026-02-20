@@ -61,8 +61,9 @@ def _transcribe_single(audio_path: Path) -> str:
         result = client.audio.transcriptions.create(
             model="whisper-1",
             file=f,
-            language="ka",
             response_format="text",
+            # язык не указываем — Whisper определяет автоматически
+            # (Georgian 'ka' не поддерживается как явный параметр API)
         )
     return result
 
