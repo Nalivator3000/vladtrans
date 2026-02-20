@@ -118,29 +118,56 @@ def _normalize_audio(audio_path: Path) -> Path:
 
 def _transcribe_groq(audio_path: Path, language: str) -> str:
     """Транскрипция через Groq Whisper large-v3 (поддерживает Georgian).
-    Перед отправкой нормализует файл в MP3 32kbps 16kHz mono — фиксирует
-    нестандартные форматы АТС и не даёт файлу превысить лимит 25 МБ.
+    1. Нормализует в MP3 32kbps 16kHz mono (фикс MPEG 2.5 @ 8/12kHz формата АТС).
+    2. Нарезает на чанки по 5 мин — Groq стабильнее на коротких кусках.
     """
-    client = _get_groq_client()
+    import subprocess
 
     norm_path = None
+    chunks_dir = None
     try:
         norm_path = _normalize_audio(audio_path)
-        log.info(f"Converted {audio_path.name} → MP3 32kbps 16kHz ({norm_path.stat().st_size / 1024:.0f} KB)")
+        norm_size_kb = norm_path.stat().st_size / 1024
+        log.info(f"Normalized {audio_path.name} → {norm_size_kb:.0f} KB MP3 16kHz")
 
-        with open(norm_path, "rb") as f:
-            result = client.audio.transcriptions.create(
-                model="whisper-large-v3",
-                file=(norm_path.name, f, "audio/mpeg"),
-                language=language,
-                response_format="text",
-            )
+        chunks_dir = Path(tempfile.mkdtemp())
+        chunk_pattern = str(chunks_dir / "chunk_%03d.mp3")
+        subprocess.run(
+            [
+                "ffmpeg", "-y", "-i", str(norm_path),
+                "-f", "segment", "-segment_time", "300",  # 5-min chunks
+                "-c", "copy", chunk_pattern,
+            ],
+            check=True,
+            capture_output=True,
+        )
+
+        chunks = sorted(chunks_dir.glob("chunk_*.mp3"))
+        log.info(f"Split into {len(chunks)} chunks of 5 min")
+
+        client = _get_groq_client()
+        transcripts = []
+        for i, chunk in enumerate(chunks):
+            log.info(f"Transcribing chunk {i+1}/{len(chunks)} ({chunk.stat().st_size/1024:.0f} KB)")
+            with open(chunk, "rb") as f:
+                result = client.audio.transcriptions.create(
+                    model="whisper-large-v3",
+                    file=("audio.mp3", f, "audio/mpeg"),
+                    language=language,
+                    response_format="text",
+                )
+            transcripts.append(result)
+
+        log.info(f"Groq transcription done: {len(chunks)} chunks for {audio_path.name}")
+        return " ".join(transcripts)
+
     finally:
         if norm_path and norm_path.exists():
             norm_path.unlink(missing_ok=True)
-
-    log.info(f"Groq transcription done for {audio_path.name}")
-    return result
+        if chunks_dir and chunks_dir.exists():
+            for f in chunks_dir.glob("*"):
+                f.unlink(missing_ok=True)
+            chunks_dir.rmdir()
 
 
 def _transcribe_openai_translation(audio_path: Path) -> str:
