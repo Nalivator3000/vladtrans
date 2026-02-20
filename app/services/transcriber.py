@@ -146,17 +146,27 @@ def _transcribe_groq(audio_path: Path, language: str) -> str:
         log.info(f"Split into {len(chunks)} chunks of 5 min")
 
         client = _get_groq_client()
+        # Контекстный промпт помогает Whisper точнее транскрибировать
+        # и не путать языки в начале звонка (автодозвонщик на русском/английском)
+        context_prompt = (
+            "Это запись телефонного разговора колл-центра на грузинском языке. "
+            "Оператор предлагает клиенту продукт для здоровья."
+        )
         transcripts = []
+        prev_text = ""  # последний фрагмент предыдущего чанка для контекста
         for i, chunk in enumerate(chunks):
             log.info(f"Transcribing chunk {i+1}/{len(chunks)} ({chunk.stat().st_size/1024:.0f} KB)")
+            prompt = (context_prompt + " " + prev_text).strip()
             with open(chunk, "rb") as f:
                 result = client.audio.transcriptions.create(
-                    model="whisper-large-v3",
+                    model="whisper-large-v3-turbo",
                     file=("audio.mp3", f, "audio/mpeg"),
                     language=language,
                     response_format="text",
+                    prompt=prompt,
                 )
             transcripts.append(result)
+            prev_text = result[-200:] if result else ""  # контекст для следующего чанка
 
         log.info(f"Groq transcription done: {len(chunks)} chunks for {audio_path.name}")
         return " ".join(transcripts)
