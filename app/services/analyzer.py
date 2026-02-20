@@ -7,6 +7,31 @@ from openai import AuthenticationError, OpenAI, RateLimitError, APIError
 client = OpenAI(api_key=os.environ["OPENAI_API_KEY"])
 log = logging.getLogger(__name__)
 
+
+def _translate_to_russian(transcript: str) -> str:
+    """Переводит транскрипт на русский язык для более точного анализа GPT."""
+    try:
+        response = client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[
+                {
+                    "role": "system",
+                    "content": (
+                        "Ты переводчик. Переведи текст на русский язык дословно, "
+                        "сохраняя структуру диалога. Не добавляй пояснений."
+                    ),
+                },
+                {"role": "user", "content": transcript},
+            ],
+            temperature=0,
+        )
+        translated = response.choices[0].message.content
+        log.info(f"Translated transcript to Russian ({len(translated)} chars)")
+        return translated
+    except Exception as e:
+        log.warning(f"Translation failed ({e}), using original transcript")
+        return transcript
+
 EXPECTED_FIELDS = {
     "q1_1", "q1_2", "q1_3",
     "q2_1", "q2_2", "q2_3",
@@ -117,17 +142,23 @@ QUESTIONNAIRE_PROMPT = """Оцени звонок по следующим кри
 }"""
 
 
-def analyze_transcript(transcript: str) -> dict:
+def analyze_transcript(transcript: str, language: str = "ka") -> dict:
     """
     Анализирует транскрипт звонка и возвращает заполненную анкету.
+    Если язык не русский/английский — переводит транскрипт на русский перед анализом.
     Бросает RuntimeError при ошибках API (нет токенов, auth, quota и т.д.).
     """
+    analysis_text = transcript
+    if language not in ("ru", "en"):
+        log.info(f"Translating transcript from '{language}' to Russian for analysis")
+        analysis_text = _translate_to_russian(transcript)
+
     try:
         response = client.chat.completions.create(
             model="gpt-4o-mini",
             messages=[
                 {"role": "system", "content": SYSTEM_PROMPT},
-                {"role": "user", "content": f"{QUESTIONNAIRE_PROMPT}\n\nТРАНСКРИПТ ЗВОНКА:\n{transcript}"},
+                {"role": "user", "content": f"{QUESTIONNAIRE_PROMPT}\n\nТРАНСКРИПТ ЗВОНКА:\n{analysis_text}"},
             ],
             temperature=0,
             response_format={"type": "json_object"},

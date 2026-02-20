@@ -60,7 +60,7 @@ async def _process_call_async(call_id: int, audio_path: str, language: str = "ka
         # --- Шаг 2: Анализ анкеты ---
         log.info(f"[call_id={call_id}] Starting AI analysis")
         try:
-            answers = analyze_transcript(transcript)
+            answers = analyze_transcript(transcript, language)
         except Exception as exc:
             error_msg = f"AI analysis failed: {exc}"
             log.error(f"[call_id={call_id}] {error_msg}", exc_info=True)
