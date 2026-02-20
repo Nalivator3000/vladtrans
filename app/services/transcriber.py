@@ -94,16 +94,53 @@ def _transcribe_single(audio_path: Path, language: str) -> str:
         return _transcribe_openai_translation(audio_path)
 
 
+def _to_wav(audio_path: Path) -> Path:
+    """
+    Конвертирует аудио в WAV 16kHz mono через ffmpeg.
+    Нужно для нестандартных форматов (MPEG 2.5, 8kHz) которые Groq не принимает.
+    """
+    import subprocess
+    wav_path = audio_path.with_suffix(".wav")
+    subprocess.run(
+        [
+            "ffmpeg", "-y", "-i", str(audio_path),
+            "-ar", "16000", "-ac", "1", "-f", "wav",
+            str(wav_path),
+        ],
+        check=True,
+        capture_output=True,
+    )
+    return wav_path
+
+
 def _transcribe_groq(audio_path: Path, language: str) -> str:
-    """Транскрипция через Groq Whisper large-v3 (поддерживает Georgian)."""
+    """Транскрипция через Groq Whisper large-v3-turbo (поддерживает Georgian).
+    Перед отправкой конвертирует файл в WAV 16kHz — на случай нестандартных
+    форматов АТС (MPEG 2.5 @ 8kHz и др.).
+    """
     client = _get_groq_client()
-    with open(audio_path, "rb") as f:
-        result = client.audio.transcriptions.create(
-            model="whisper-large-v3-turbo",
-            file=f,
-            language=language,
-            response_format="text",
-        )
+
+    wav_path = None
+    try:
+        try:
+            wav_path = _to_wav(audio_path)
+            send_path = wav_path
+            log.info(f"Converted {audio_path.name} → WAV 16kHz for Groq")
+        except Exception as e:
+            log.warning(f"ffmpeg conversion failed ({e}), sending original file")
+            send_path = audio_path
+
+        with open(send_path, "rb") as f:
+            result = client.audio.transcriptions.create(
+                model="whisper-large-v3-turbo",
+                file=f,
+                language=language,
+                response_format="text",
+            )
+    finally:
+        if wav_path and wav_path.exists():
+            wav_path.unlink(missing_ok=True)
+
     log.info(f"Groq transcription done for {audio_path.name}")
     return result
 
