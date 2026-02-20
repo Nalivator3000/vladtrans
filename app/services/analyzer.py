@@ -8,17 +8,22 @@ client = OpenAI(api_key=os.environ["OPENAI_API_KEY"])
 log = logging.getLogger(__name__)
 
 
-def _translate_to_russian(transcript: str) -> str:
-    """Переводит транскрипт на русский язык для более точного анализа GPT."""
+def _translate_to_english(transcript: str) -> str:
+    """
+    Переводит транскрипт на английский язык для более точного анализа GPT.
+    Использует gpt-4o — он лучше восстанавливает смысл из корявой автотранскрипции.
+    """
     try:
         response = client.chat.completions.create(
-            model="gpt-4o-mini",
+            model="gpt-4o",
             messages=[
                 {
                     "role": "system",
                     "content": (
-                        "Ты переводчик. Переведи текст на русский язык дословно, "
-                        "сохраняя структуру диалога. Не добавляй пояснений."
+                        "You are a translator. This is an automatic transcription of a call center "
+                        "phone conversation in Georgian. The text may contain recognition errors. "
+                        "Translate to English as accurately as possible, restoring the meaning. "
+                        "Preserve the dialogue structure. Do not add explanations."
                     ),
                 },
                 {"role": "user", "content": transcript},
@@ -26,7 +31,7 @@ def _translate_to_russian(transcript: str) -> str:
             temperature=0,
         )
         translated = response.choices[0].message.content
-        log.info(f"Translated transcript to Russian ({len(translated)} chars)")
+        log.info(f"Translated transcript to English ({len(translated)} chars)")
         return translated
     except Exception as e:
         log.warning(f"Translation failed ({e}), using original transcript")
@@ -49,7 +54,7 @@ EXPECTED_FIELDS = {
 
 SYSTEM_PROMPT = """Ты — аналитик качества звонков грузинского колл-центра.
 Тебе дают транскрипт телефонного разговора между оператором и клиентом.
-Транскрипт на русском языке (переведён с грузинского автоматически, может содержать неточности).
+Транскрипт на английском языке (переведён с грузинского автоматически, может содержать неточности перевода).
 Оценивай смысл и контекст разговора целиком, не придираясь к точным формулировкам.
 Твоя задача — оценить работу оператора по чек-листу и вернуть результат в формате JSON.
 
@@ -151,8 +156,8 @@ def analyze_transcript(transcript: str, language: str = "ka") -> dict:
     """
     analysis_text = transcript
     if language not in ("ru", "en"):
-        log.info(f"Translating transcript from '{language}' to Russian for analysis")
-        analysis_text = _translate_to_russian(transcript)
+        log.info(f"Translating transcript from '{language}' to English for analysis")
+        analysis_text = _translate_to_english(transcript)
 
     try:
         response = client.chat.completions.create(
