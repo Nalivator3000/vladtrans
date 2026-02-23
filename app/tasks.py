@@ -2,14 +2,22 @@ import asyncio
 import logging
 
 from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from app.core.celery_app import celery_app
-from app.core.database import AsyncSessionLocal
 from app.models.models import Call, QuestionnaireResponse
 from app.services.analyzer import analyze_transcript
 from app.services.transcriber import transcribe_audio
 
 log = logging.getLogger(__name__)
+
+
+def _make_session():
+    """Создаёт свежий async engine и сессию — нужно для Celery fork-воркеров.
+    Каждый воркер должен иметь свой engine, не унаследованный от родительского процесса."""
+    from app.core.config import settings
+    engine = create_async_engine(settings.async_database_url, echo=False)
+    return async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
 
 
 @celery_app.task(bind=True, max_retries=3)
@@ -26,6 +34,7 @@ def process_call(self, call_id: int, audio_path: str, language: str = "ka"):
 
 
 async def _process_call_async(call_id: int, audio_path: str, language: str = "ka"):
+    AsyncSessionLocal = _make_session()
     async with AsyncSessionLocal() as db:
         call = await db.get(Call, call_id)
         if not call:
