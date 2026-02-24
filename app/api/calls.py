@@ -160,15 +160,24 @@ async def get_call_results(call_id: int, db: AsyncSession = Depends(get_db)):
         "q11_1", "q11_2", "q11_3",
         "q12_1", "q13_1", "q14_1",
     ]
+    t_fields = ["t1", "t2", "t3", "t4", "t5", "t6", "t7", "t8"]
+
+    # max_score: 29 для стандартного звонка (3+3+3+4+3+3+2+2+3+1+1+1)
+    # q3_1 = 2б, один из блоков 5/6/7 = 3б
+    max_score = 29 if call.call_type == "standard" else None
 
     return {
         "call_id": call_id,
         "status": "done",
+        "call_type": call.call_type,
         "order_id": call.order_id,
         "call_date": call.call_date,
         "duration_sec": call.duration_sec,
         "total_score": qr.total_score,
-        "max_score": 34,
+        "max_score": max_score,
+        "price_block_used": qr.price_block_used,
+        "triggers": {f: getattr(qr, f) for f in t_fields},
+        "triggers_fired": qr.triggers_fired,
         "filled_by_ai": qr.filled_by_ai,
         "corrected_by_human": qr.corrected_by_human,
         "questionnaire": {f: getattr(qr, f) for f in q_fields},

@@ -5,6 +5,14 @@ from sqlalchemy import (
 )
 from sqlalchemy.orm import DeclarativeBase, relationship
 
+# Максимальный балл для каждого блока (вилка / скидка / базовый одинаковы = 3)
+MAX_SCORE_BY_BLOCK = {
+    "standard": 29,   # 3+3+3+4+3+3+2+2+3+1+1+1 (один из блоков 5/6/7)
+    "short":    None,  # определяется по ненулевым полям
+    "complaint": None,
+    "other":    None,
+}
+
 
 class Base(DeclarativeBase):
     pass
@@ -32,6 +40,7 @@ class Call(Base):
     audio_url           = Column(Text)
     language            = Column(String(10), default="ka")        # ISO-639-1 язык звонка
     transcript_text     = Column(Text)
+    call_type           = Column(String(20), default="standard")  # standard/short/complaint/other
     processing_status   = Column(String(20), default="pending")   # pending/processing/done/error
     processing_error    = Column(Text)
     created_at          = Column(TIMESTAMP(timezone=True), default=datetime.utcnow)
@@ -108,6 +117,19 @@ class QuestionnaireResponse(Base):
     # 14. Перезвон (макс 1)
     q14_1 = Column(Boolean)  # Сделал попытку перезвонить
 
+    # Блок цен: какой вариант использовался в звонке (5=вилка, 6=скидка, 7=базовый)
+    price_block_used = Column(SmallInteger)  # 5 | 6 | 7 | NULL
+
+    # Триггеры — критические нарушения (true = нарушение зафиксировано)
+    t1 = Column(Boolean)  # Грубость / оскорбление клиента
+    t2 = Column(Boolean)  # Обман клиента (продукт / цена)
+    t3 = Column(Boolean)  # Давление / агрессивные продажи
+    t4 = Column(Boolean)  # Некорректное завершение звонка
+    t5 = Column(Boolean)  # Критическое нарушение скрипта
+    t6 = Column(Boolean)  # Разглашение конфиденциальной информации
+    t7 = Column(Boolean)  # Негативное обсуждение конкурентов
+    t8 = Column(Boolean)  # Прочее критическое нарушение
+
     filled_by_ai       = Column(Boolean, default=True)
     corrected_by_human = Column(Boolean, default=False)
     created_at         = Column(TIMESTAMP(timezone=True), default=datetime.utcnow)
@@ -116,21 +138,66 @@ class QuestionnaireResponse(Base):
 
     @property
     def total_score(self) -> int:
-        fields = [
-            self.q1_1, self.q1_2, self.q1_3,
-            self.q2_1, self.q2_2, self.q2_3,
-            self.q3_1, self.q3_2,
-            self.q4_1, self.q4_2, self.q4_3, self.q4_4,
-            self.q5_1, self.q5_2, self.q5_3,
-            self.q6_1, self.q6_2, self.q6_3,
-            self.q7_1, self.q7_2, self.q7_3,
-            self.q8_1, self.q8_2, self.q8_3,
-            self.q9_1, self.q9_2,
-            self.q10_1, self.q10_2,
-            self.q11_1, self.q11_2, self.q11_3,
-            self.q12_1, self.q13_1, self.q14_1,
-        ]
-        return sum(1 for f in fields if f is True)
+        """
+        Подсчёт баллов:
+        - q3_1 стоит 2 балла (остальные — 1)
+        - блоки 5, 6, 7 — взаимоисключающие (учитывается только тот, что в price_block_used)
+        - триггеры не добавляют и не вычитают баллы (хранятся отдельно)
+        """
+        score = 0
+
+        # Блоки 1-4 (1б каждый)
+        for f in [self.q1_1, self.q1_2, self.q1_3,
+                  self.q2_1, self.q2_2, self.q2_3,
+                  self.q3_2,
+                  self.q4_1, self.q4_2, self.q4_3, self.q4_4]:
+            if f is True:
+                score += 1
+
+        # q3_1 стоит 2 балла
+        if self.q3_1 is True:
+            score += 2
+
+        # Блок 5, 6 или 7 (зависит от price_block_used)
+        if self.price_block_used == 5:
+            for f in [self.q5_1, self.q5_2, self.q5_3]:
+                if f is True:
+                    score += 1
+        elif self.price_block_used == 6:
+            for f in [self.q6_1, self.q6_2, self.q6_3]:
+                if f is True:
+                    score += 1
+        elif self.price_block_used == 7:
+            for f in [self.q7_1, self.q7_2, self.q7_3]:
+                if f is True:
+                    score += 1
+        else:
+            # price_block_used не определён — считаем лучший из трёх блоков
+            b5 = sum(1 for f in [self.q5_1, self.q5_2, self.q5_3] if f is True)
+            b6 = sum(1 for f in [self.q6_1, self.q6_2, self.q6_3] if f is True)
+            b7 = sum(1 for f in [self.q7_1, self.q7_2, self.q7_3] if f is True)
+            score += max(b5, b6, b7)
+
+        # Блоки 8-14 (1б каждый)
+        for f in [self.q8_1, self.q8_2, self.q8_3,
+                  self.q9_1, self.q9_2,
+                  self.q10_1, self.q10_2,
+                  self.q11_1, self.q11_2, self.q11_3,
+                  self.q12_1, self.q13_1, self.q14_1]:
+            if f is True:
+                score += 1
+
+        return score
+
+    @property
+    def triggers_fired(self) -> list[str]:
+        """Список триггеров, которые сработали (true)."""
+        result = []
+        for i, t in enumerate([self.t1, self.t2, self.t3, self.t4,
+                                self.t5, self.t6, self.t7, self.t8], start=1):
+            if t is True:
+                result.append(f"t{i}")
+        return result
 
 
 class Outcome(Base):
