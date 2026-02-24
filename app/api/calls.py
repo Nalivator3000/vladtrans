@@ -170,6 +170,7 @@ async def get_call_results(call_id: int, db: AsyncSession = Depends(get_db)):
         "call_id": call_id,
         "status": "done",
         "call_type": call.call_type,
+        "call_notes": call.call_notes,
         "order_id": call.order_id,
         "call_date": call.call_date,
         "duration_sec": call.duration_sec,

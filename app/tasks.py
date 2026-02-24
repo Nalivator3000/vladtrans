@@ -89,9 +89,11 @@ async def _process_call_async(call_id: int, audio_path: str, language: str = "ka
         log.info(f"[call_id={call_id}] AI analysis done, {len(answers)} fields")
 
         # --- Шаг 3: Сохранение анкеты (idempotent) ---
-        # Извлекаем call_type из ответа и сохраняем в calls, а не в questionnaire_responses
+        # Извлекаем мета-поля из ответа и сохраняем в calls, а не в questionnaire_responses
         call_type = answers.pop("call_type", "standard") or "standard"
         call.call_type = call_type
+        call.call_notes = answers.pop("call_notes", None)  # GPT notes for non-standard calls
+        log.info(f"[call_id={call_id}] call_type={call_type}, notes={'yes' if call.call_notes else 'none'}")
 
         existing = await db.scalar(
             select(QuestionnaireResponse).where(QuestionnaireResponse.call_id == call_id)

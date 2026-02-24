@@ -58,6 +58,7 @@ EXPECTED_FIELDS = {
     # Мета-поля
     "price_block_used",   # integer: 5, 6, 7, или null
     "call_type",          # "standard" | "short" | "complaint" | "other"
+    "call_notes",         # free-form GPT notes (required for non-standard, optional for standard)
     # Триггеры (нарушения)
     "t1", "t2", "t3", "t4", "t5", "t6", "t7", "t8",
 }
@@ -77,7 +78,13 @@ QUESTIONNAIRE_PROMPT = """First, determine the call type:
 - "standard": full sales call (greeting → needs identification → product presentation → price → CRM → closing)
 - "short": brief call (callback scheduling, address clarification, call lasted < 2 minutes with no full script)
 - "complaint": the client is making a complaint, not a sales call
-- "other": anything else not fitting above categories
+- "other": anything else not fitting above categories (strange/suspicious call, wrong number, silent call, etc.)
+
+CALL_NOTES RULES (field "call_notes"):
+- For "short" calls: briefly describe what the call was about (e.g. "Client called to clarify delivery address. Operator confirmed address and said goodbye.")
+- For "complaint" calls: describe the complaint topic, how the operator handled it, and the outcome.
+- For "other" / suspicious calls: describe what was strange or suspicious (e.g. "Silent call, no speech detected", "Client was abusive and hung up", "Possible test call", "Wrong number").
+- For "standard" calls: fill call_notes ONLY if there is something notable (unusual objection, suspicious behavior, script deviation worth flagging). Otherwise set to null.
 
 For "short", "complaint", and "other" calls: set all questionnaire fields to null EXCEPT those sections that clearly apply. Always fill call_type.
 
@@ -180,6 +187,7 @@ TRIGGERS — critical violations (true = violation detected, false = no violatio
 Return JSON in exactly this format:
 {
   "call_type": "standard",
+  "call_notes": null,
   "price_block_used": 5,
   "q1_1": true, "q1_2": true, "q1_3": false,
   "q2_1": true, "q2_2": true, "q2_3": true,
@@ -216,7 +224,7 @@ QUESTIONNAIRE_FIELDS = {
     "q12_1", "q13_1", "q14_1",
 }
 TRIGGER_FIELDS = {"t1", "t2", "t3", "t4", "t5", "t6", "t7", "t8"}
-META_FIELDS = {"price_block_used", "call_type"}
+META_FIELDS = {"price_block_used", "call_type", "call_notes"}
 
 
 def analyze_transcript(transcript: str, language: str = "ka") -> dict:

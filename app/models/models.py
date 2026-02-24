@@ -41,6 +41,7 @@ class Call(Base):
     language            = Column(String(10), default="ka")        # ISO-639-1 язык звонка
     transcript_text     = Column(Text)
     call_type           = Column(String(20), default="standard")  # standard/short/complaint/other
+    call_notes          = Column(Text)    # GPT-generated notes (required for non-standard calls)
     processing_status   = Column(String(20), default="pending")   # pending/processing/done/error
     processing_error    = Column(Text)
     created_at          = Column(TIMESTAMP(timezone=True), default=datetime.utcnow)
