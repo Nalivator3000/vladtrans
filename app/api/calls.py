@@ -27,14 +27,18 @@ class CallCreate(BaseModel):
 # POST /calls/  — принять звонок по URL (основной эндпоинт для продакшена)
 # --------------------------------------------------------------------------- #
 @router.post("/", status_code=202)
-async def create_call(data: CallCreate, db: AsyncSession = Depends(get_db)):
+async def create_call(
+    data: CallCreate,
+    background_tasks: BackgroundTasks,
+    db: AsyncSession = Depends(get_db),
+):
     call = Call(**data.model_dump())
     db.add(call)
     await db.commit()
     await db.refresh(call)
 
-    from app.tasks import process_call
-    process_call.delay(call.id, data.audio_url, data.language)
+    from app.tasks import _process_call_async
+    background_tasks.add_task(_process_call_async, call.id, data.audio_url, data.language)
 
     return {"call_id": call.id, "status": "queued", "language": data.language}
 
