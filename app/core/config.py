@@ -7,8 +7,11 @@ class Settings(BaseSettings):
     # OpenAI (анализ анкеты через GPT)
     openai_api_key: str
 
-    # Groq (транскрипция Whisper large-v3, поддерживает Georgian)
-    groq_api_key: str
+    # ElevenLabs (транскрипция Scribe v1, основной провайдер)
+    elevenlabs_api_key: str
+
+    # Groq (запасной вариант транскрипции Whisper large-v3)
+    groq_api_key: str = ""
 
     # Database — Railway даёт postgresql://, нам нужен asyncpg драйвер
     database_url: str = "postgresql+asyncpg://vladtrans:vladtrans@db:5432/vladtrans"

@@ -87,11 +87,7 @@ def _transcribe_file(audio_path: Path, language: str) -> str:
 
 
 def _transcribe_single(audio_path: Path, language: str) -> str:
-    if language in GROQ_SUPPORTED_LANGUAGES:
-        return _transcribe_groq(audio_path, language)
-    else:
-        log.warning(f"Language '{language}' not supported by Groq — falling back to OpenAI translations")
-        return _transcribe_openai_translation(audio_path)
+    return _transcribe_elevenlabs(audio_path, language)
 
 
 def _normalize_audio(audio_path: Path) -> Path:
@@ -118,6 +114,35 @@ def _normalize_audio(audio_path: Path) -> Path:
         capture_output=True,
     )
     return out_path
+
+
+def _transcribe_elevenlabs(audio_path: Path, language: str) -> str:
+    """Транскрипция через ElevenLabs Scribe v1.
+    Нормализует аудио через ffmpeg, затем отправляет в Scribe API.
+    Поддерживает Georgian и 99 других языков без чанкования (лимит 2ч/2ГБ).
+    """
+    norm_path = None
+    try:
+        norm_path = _normalize_audio(audio_path)
+        norm_size_kb = norm_path.stat().st_size / 1024
+        log.info(f"Normalized {audio_path.name} → {norm_size_kb:.0f} KB MP3 16kHz")
+
+        api_key = os.environ["ELEVENLABS_API_KEY"]
+        with open(norm_path, "rb") as f:
+            response = httpx.post(
+                "https://api.elevenlabs.io/v1/speech-to-text",
+                headers={"xi-api-key": api_key},
+                files={"audio": ("audio.mp3", f, "audio/mpeg")},
+                data={"model_id": "scribe_v1", "language_code": language},
+                timeout=180,
+            )
+        response.raise_for_status()
+        text = response.json().get("text", "")
+        log.info(f"ElevenLabs Scribe done: {len(text)} chars for {audio_path.name}")
+        return text
+    finally:
+        if norm_path and norm_path.exists():
+            norm_path.unlink(missing_ok=True)
 
 
 def _transcribe_groq(audio_path: Path, language: str) -> str:
