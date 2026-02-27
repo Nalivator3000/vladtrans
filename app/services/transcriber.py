@@ -1,6 +1,8 @@
 import logging
 import os
 import tempfile
+import threading
+import time
 from pathlib import Path
 
 import httpx
@@ -8,6 +10,12 @@ import httpx
 log = logging.getLogger(__name__)
 
 MAX_FILE_SIZE_MB = 24  # Whisper limit is 25 MB
+
+# Ограничиваем параллельные вызовы ElevenLabs — типичный лимит API 5 concurrent requests.
+# Настраивается через ELEVENLABS_CONCURRENCY (default 5).
+_ELEVENLABS_SEMAPHORE = threading.BoundedSemaphore(
+    int(os.environ.get("ELEVENLABS_CONCURRENCY", "5"))
+)
 
 # Groq поддерживает Georgian и ещё 98 языков (whisper-large-v3).
 # Для языков НЕ поддерживаемых Groq используем OpenAI translations → English.
@@ -130,14 +138,23 @@ def _transcribe_elevenlabs(audio_path: Path, language: str) -> dict:
         log.info(f"Normalized {audio_path.name} → {norm_size_bytes//1024} KB, ~{duration_sec}s")
 
         api_key = os.environ["ELEVENLABS_API_KEY"]
-        with open(norm_path, "rb") as f:
-            response = httpx.post(
-                "https://api.elevenlabs.io/v1/speech-to-text",
-                headers={"xi-api-key": api_key},
-                files={"file": ("audio.mp3", f, "audio/mpeg")},
-                data={"model_id": "scribe_v1", "language_code": language},
-                timeout=180,
-            )
+        response = None
+        for attempt in range(4):
+            with _ELEVENLABS_SEMAPHORE:
+                with open(norm_path, "rb") as f:
+                    response = httpx.post(
+                        "https://api.elevenlabs.io/v1/speech-to-text",
+                        headers={"xi-api-key": api_key},
+                        files={"file": ("audio.mp3", f, "audio/mpeg")},
+                        data={"model_id": "scribe_v1", "language_code": language},
+                        timeout=180,
+                    )
+            if response.status_code == 429:
+                wait = min(5 * (2 ** attempt), 60)  # 5s, 10s, 20s, 60s
+                log.warning(f"ElevenLabs 429 rate limit, retry in {wait}s (attempt {attempt + 1}/4)")
+                time.sleep(wait)
+                continue
+            break
         if not response.is_success:
             log.error(f"ElevenLabs error {response.status_code}: {response.text[:300]}")
             response.raise_for_status()
