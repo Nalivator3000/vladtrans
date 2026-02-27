@@ -132,11 +132,13 @@ def _transcribe_elevenlabs(audio_path: Path, language: str) -> str:
             response = httpx.post(
                 "https://api.elevenlabs.io/v1/speech-to-text",
                 headers={"xi-api-key": api_key},
-                files={"audio": ("audio.mp3", f, "audio/mpeg")},
+                files={"file": ("audio.mp3", f, "audio/mpeg")},
                 data={"model_id": "scribe_v1", "language_code": language},
                 timeout=180,
             )
-        response.raise_for_status()
+        if not response.is_success:
+            log.error(f"ElevenLabs error {response.status_code}: {response.text[:300]}")
+            response.raise_for_status()
         text = response.json().get("text", "")
         log.info(f"ElevenLabs Scribe done: {len(text)} chars for {audio_path.name}")
         return text
