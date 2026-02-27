@@ -46,7 +46,7 @@ async def _process_call_async(call_id: int, audio_path: str, language: str = "ka
         await db.commit()
 
         try:
-            transcript = transcribe_audio(audio_path, language)
+            result = transcribe_audio(audio_path, language)
         except Exception as exc:
             error_msg = f"Transcription failed: {exc}"
             log.error(f"[call_id={call_id}] {error_msg}", exc_info=True)
@@ -54,6 +54,9 @@ async def _process_call_async(call_id: int, audio_path: str, language: str = "ka
             call.processing_error = error_msg
             await db.commit()
             raise
+
+        transcript = result["text"]
+        duration_sec = result["duration_sec"]
 
         if not transcript or not transcript.strip():
             error_msg = "Transcription returned empty result"
@@ -64,11 +67,14 @@ async def _process_call_async(call_id: int, audio_path: str, language: str = "ka
             raise ValueError(error_msg)
 
         call.transcript_text = transcript
-        # ElevenLabs Scribe: $0.40/hour = $0.006667/min
-        if call.duration_sec:
-            call.transcription_cost_usd = round(call.duration_sec / 3600 * 0.40, 6)
+        # Обновляем duration_sec из реального аудио если не передан при создании
+        if not call.duration_sec and duration_sec:
+            call.duration_sec = duration_sec
+        # ElevenLabs Scribe: $0.40/hour
+        actual_duration = call.duration_sec or duration_sec
+        call.transcription_cost_usd = round(actual_duration / 3600 * 0.40, 6)
         call.transcription_provider = "elevenlabs"
-        log.info(f"[call_id={call_id}] Transcription done, {len(transcript)} chars, cost=${call.transcription_cost_usd}")
+        log.info(f"[call_id={call_id}] Transcription done, {len(transcript)} chars, {actual_duration}s, cost=${call.transcription_cost_usd}")
 
         # --- Шаг 2: Анализ анкеты ---
         log.info(f"[call_id={call_id}] Starting AI analysis")

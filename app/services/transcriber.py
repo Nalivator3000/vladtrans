@@ -41,12 +41,11 @@ def _get_openai_client():
     return OpenAI(api_key=os.environ["OPENAI_API_KEY"])
 
 
-def transcribe_audio(audio_source: str | Path, language: str = "ka") -> str:
+def transcribe_audio(audio_source: str | Path, language: str = "ka") -> dict:
     """
-    Транскрибирует аудио через Groq Whisper large-v3 (основной провайдер).
-    Если язык не поддерживается Groq — fallback на OpenAI translations → English.
+    Транскрибирует аудио через ElevenLabs Scribe v1 (основной провайдер).
     Принимает локальный путь или HTTP(S) URL.
-    Если файл > 24 МБ — нарезает на чанки через ffmpeg.
+    Возвращает dict: {"text": str, "duration_sec": int}
     """
     source = str(audio_source)
 
@@ -56,7 +55,7 @@ def transcribe_audio(audio_source: str | Path, language: str = "ka") -> str:
     return _transcribe_file(Path(source), language)
 
 
-def _transcribe_url(url: str, language: str) -> str:
+def _transcribe_url(url: str, language: str) -> dict:
     """Скачивает аудио по URL во временный файл и транскрибирует."""
     clean_url = url.split("?")[0]
     suffix = "." + clean_url.rsplit(".", 1)[-1] if "." in clean_url else ".mp3"
@@ -77,7 +76,7 @@ def _transcribe_url(url: str, language: str) -> str:
         tmp_path.unlink(missing_ok=True)
 
 
-def _transcribe_file(audio_path: Path, language: str) -> str:
+def _transcribe_file(audio_path: Path, language: str) -> dict:
     file_size_mb = audio_path.stat().st_size / (1024 * 1024)
 
     if file_size_mb <= MAX_FILE_SIZE_MB:
@@ -86,7 +85,7 @@ def _transcribe_file(audio_path: Path, language: str) -> str:
         return _transcribe_chunked(audio_path, language)
 
 
-def _transcribe_single(audio_path: Path, language: str) -> str:
+def _transcribe_single(audio_path: Path, language: str) -> dict:
     return _transcribe_elevenlabs(audio_path, language)
 
 
@@ -116,16 +115,19 @@ def _normalize_audio(audio_path: Path) -> Path:
     return out_path
 
 
-def _transcribe_elevenlabs(audio_path: Path, language: str) -> str:
+def _transcribe_elevenlabs(audio_path: Path, language: str) -> dict:
     """Транскрипция через ElevenLabs Scribe v1.
     Нормализует аудио через ffmpeg, затем отправляет в Scribe API.
     Поддерживает Georgian и 99 других языков без чанкования (лимит 2ч/2ГБ).
+    Возвращает {"text": str, "duration_sec": int} — длительность из нормализованного файла.
     """
     norm_path = None
     try:
         norm_path = _normalize_audio(audio_path)
-        norm_size_kb = norm_path.stat().st_size / 1024
-        log.info(f"Normalized {audio_path.name} → {norm_size_kb:.0f} KB MP3 16kHz")
+        norm_size_bytes = norm_path.stat().st_size
+        # Нормализованный файл: 32kbps → duration_sec = bytes * 8 / 32000
+        duration_sec = int(norm_size_bytes * 8 / 32000)
+        log.info(f"Normalized {audio_path.name} → {norm_size_bytes//1024} KB, ~{duration_sec}s")
 
         api_key = os.environ["ELEVENLABS_API_KEY"]
         with open(norm_path, "rb") as f:
@@ -140,8 +142,8 @@ def _transcribe_elevenlabs(audio_path: Path, language: str) -> str:
             log.error(f"ElevenLabs error {response.status_code}: {response.text[:300]}")
             response.raise_for_status()
         text = response.json().get("text", "")
-        log.info(f"ElevenLabs Scribe done: {len(text)} chars for {audio_path.name}")
-        return text
+        log.info(f"ElevenLabs Scribe done: {len(text)} chars, {duration_sec}s for {audio_path.name}")
+        return {"text": text, "duration_sec": duration_sec}
     finally:
         if norm_path and norm_path.exists():
             norm_path.unlink(missing_ok=True)
@@ -247,10 +249,13 @@ def _transcribe_chunked(audio_path: Path, language: str) -> str:
     )
 
     chunks = sorted(chunks_dir.glob("chunk_*.mp3"))
-    transcripts = [_transcribe_single(chunk, language) for chunk in chunks]
+    results = [_transcribe_single(chunk, language) for chunk in chunks]
 
     for chunk in chunks:
         chunk.unlink()
     chunks_dir.rmdir()
 
-    return " ".join(transcripts)
+    return {
+        "text": " ".join(r["text"] for r in results),
+        "duration_sec": sum(r["duration_sec"] for r in results),
+    }
