@@ -46,7 +46,7 @@ async def _process_call_async(call_id: int, audio_path: str, language: str = "ka
         await db.commit()
 
         try:
-            result = transcribe_audio(audio_path, language)
+            result = await asyncio.to_thread(transcribe_audio, audio_path, language)
         except Exception as exc:
             error_msg = f"Transcription failed: {exc}"
             log.error(f"[call_id={call_id}] {error_msg}", exc_info=True)
@@ -79,7 +79,7 @@ async def _process_call_async(call_id: int, audio_path: str, language: str = "ka
         # --- Шаг 2: Анализ анкеты ---
         log.info(f"[call_id={call_id}] Starting AI analysis")
         try:
-            answers = analyze_transcript(transcript, language)
+            answers = await asyncio.to_thread(analyze_transcript, transcript, language)
         except Exception as exc:
             error_msg = f"AI analysis failed: {exc}"
             log.error(f"[call_id={call_id}] {error_msg}", exc_info=True)
