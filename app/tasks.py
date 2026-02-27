@@ -64,7 +64,11 @@ async def _process_call_async(call_id: int, audio_path: str, language: str = "ka
             raise ValueError(error_msg)
 
         call.transcript_text = transcript
-        log.info(f"[call_id={call_id}] Transcription done, {len(transcript)} chars")
+        # ElevenLabs Scribe: $0.40/hour = $0.006667/min
+        if call.duration_sec:
+            call.transcription_cost_usd = round(call.duration_sec / 3600 * 0.40, 6)
+        call.transcription_provider = "elevenlabs"
+        log.info(f"[call_id={call_id}] Transcription done, {len(transcript)} chars, cost=${call.transcription_cost_usd}")
 
         # --- Шаг 2: Анализ анкеты ---
         log.info(f"[call_id={call_id}] Starting AI analysis")

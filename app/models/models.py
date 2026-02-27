@@ -40,11 +40,13 @@ class Call(Base):
     audio_url           = Column(Text)
     language            = Column(String(10), default="ka")        # ISO-639-1 язык звонка
     transcript_text     = Column(Text)
-    call_type           = Column(String(20), default="standard")  # standard/short/complaint/other
-    call_notes          = Column(Text)    # GPT-generated notes (required for non-standard calls)
-    processing_status   = Column(String(20), default="pending")   # pending/processing/done/error
-    processing_error    = Column(Text)
-    created_at          = Column(TIMESTAMP(timezone=True), default=datetime.utcnow)
+    call_type               = Column(String(20), default="standard")  # standard/short/complaint/other
+    call_notes              = Column(Text)    # GPT-generated notes (required for non-standard calls)
+    transcription_provider  = Column(String(20), default="elevenlabs")
+    transcription_cost_usd  = Column(Numeric(10, 6))
+    processing_status       = Column(String(20), default="pending")   # pending/processing/done/error
+    processing_error        = Column(Text)
+    created_at              = Column(TIMESTAMP(timezone=True), default=datetime.utcnow)
 
     operator             = relationship("Operator", back_populates="calls")
     questionnaire        = relationship("QuestionnaireResponse", back_populates="call", uselist=False)
