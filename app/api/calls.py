@@ -9,14 +9,14 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
-from app.models.models import Call, QuestionnaireResponse
+from app.models.models import Call, Operator, QuestionnaireResponse
 
 router = APIRouter()
 
 
 class CallCreate(BaseModel):
     order_id: str
-    operator_id: int | None = None
+    operator_id: str | None = None  # ATS-идентификатор оператора (любая строка/число)
     call_date: datetime
     duration_sec: int | None = None
     audio_url: str
@@ -32,7 +32,21 @@ async def create_call(
     background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_db),
 ):
-    call = Call(**data.model_dump())
+    # Авто-создание оператора по external_id если не существует
+    internal_operator_id = None
+    if data.operator_id:
+        operator = await db.scalar(
+            select(Operator).where(Operator.external_id == data.operator_id)
+        )
+        if not operator:
+            operator = Operator(external_id=data.operator_id, name=data.operator_id)
+            db.add(operator)
+            await db.flush()
+        internal_operator_id = operator.id
+
+    call_data = data.model_dump()
+    call_data["operator_id"] = internal_operator_id
+    call = Call(**call_data)
     db.add(call)
     await db.commit()
     await db.refresh(call)

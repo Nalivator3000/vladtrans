@@ -21,10 +21,11 @@ class Base(DeclarativeBase):
 class Operator(Base):
     __tablename__ = "operators"
 
-    id         = Column(Integer, primary_key=True)
-    name       = Column(String(255), nullable=False)
-    team       = Column(String(100))
-    created_at = Column(TIMESTAMP(timezone=True), default=datetime.utcnow)
+    id          = Column(Integer, primary_key=True)
+    external_id = Column(String(100), unique=True, index=True)  # ATS-идентификатор
+    name        = Column(String(255), nullable=False)
+    team        = Column(String(100))
+    created_at  = Column(TIMESTAMP(timezone=True), default=datetime.utcnow)
 
     calls = relationship("Call", back_populates="operator")
 
