@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import re
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
@@ -65,6 +66,9 @@ async def _process_call_async(call_id: int, audio_path: str, language: str = "ka
             call.processing_error = error_msg
             await db.commit()
             raise ValueError(error_msg)
+
+        # Маскируем последовательности из 5+ цифр (телефоны, номера счетов)
+        transcript = re.sub(r'\d{5,}', 'xxxx', transcript)
 
         call.transcript_text = transcript
         # Обновляем duration_sec из реального аудио если не передан при создании
