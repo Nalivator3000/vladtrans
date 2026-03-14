@@ -1,7 +1,7 @@
 """
 Применяет SQL миграции к БД.
 Запускается автоматически при старте контейнера.
-Idempotent — повторный запуск не сломает уже существующие таблицы.
+Idempotent — уже применённые миграции пропускаются через таблицу schema_migrations.
 """
 import sys
 import psycopg2
@@ -19,14 +19,29 @@ def run():
     conn.autocommit = True
     cur = conn.cursor()
 
+    # Таблица учёта применённых миграций
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS schema_migrations (
+            filename   VARCHAR(255) PRIMARY KEY,
+            applied_at TIMESTAMPTZ DEFAULT NOW()
+        )
+    """)
+
     for sql_file in sorted(MIGRATIONS_DIR.glob("*.sql")):
+        cur.execute("SELECT 1 FROM schema_migrations WHERE filename = %s", (sql_file.name,))
+        if cur.fetchone():
+            print(f"  SKIP: {sql_file.name} (already applied)")
+            continue
+
         print(f"Applying {sql_file.name}...")
         sql = sql_file.read_text()
         try:
             cur.execute(sql)
+            cur.execute(
+                "INSERT INTO schema_migrations (filename) VALUES (%s)",
+                (sql_file.name,)
+            )
             print(f"  OK: {sql_file.name}")
-        except psycopg2.errors.DuplicateTable:
-            print(f"  SKIP: {sql_file.name} (tables already exist)")
         except Exception as e:
             print(f"  ERROR in {sql_file.name}: {e}")
             raise
