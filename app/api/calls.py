@@ -2,16 +2,82 @@ import shutil
 import tempfile
 from datetime import datetime
 from pathlib import Path
+from typing import Optional
 
-from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, Query, UploadFile
 from pydantic import BaseModel
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
 from app.models.models import Call, Operator, QuestionnaireResponse
 
 router = APIRouter()
+
+
+# --------------------------------------------------------------------------- #
+# GET /calls/  — список звонков с фильтрами и пагинацией
+# --------------------------------------------------------------------------- #
+@router.get("/")
+async def list_calls(
+    db: AsyncSession = Depends(get_db),
+    operator_id: Optional[str] = Query(None, description="external_id оператора в ATS"),
+    date_from: Optional[datetime] = Query(None),
+    date_to: Optional[datetime] = Query(None),
+    status: Optional[str] = Query(None, description="pending/processing/done/error"),
+    call_type: Optional[str] = Query(None, description="standard/short/complaint/other"),
+    limit: int = Query(50, ge=1, le=200),
+    offset: int = Query(0, ge=0),
+):
+    # Базовый запрос с LEFT JOIN на анкету и оператора
+    base = (
+        select(
+            Call.id, Call.order_id, Call.operator_id, Call.call_date,
+            Call.duration_sec, Call.processing_status, Call.call_type,
+            Call.created_at,
+            QuestionnaireResponse.total_score if hasattr(QuestionnaireResponse, 'total_score') else None,
+        )
+        .outerjoin(QuestionnaireResponse, QuestionnaireResponse.call_id == Call.id)
+    )
+
+    if operator_id:
+        base = base.join(Operator, Operator.id == Call.operator_id).where(
+            Operator.external_id == operator_id
+        )
+    if date_from:
+        base = base.where(Call.call_date >= date_from)
+    if date_to:
+        base = base.where(Call.call_date <= date_to)
+    if status:
+        base = base.where(Call.processing_status == status)
+    if call_type:
+        base = base.where(Call.call_type == call_type)
+
+    total = await db.scalar(select(func.count()).select_from(base.subquery()))
+
+    rows = await db.execute(
+        base.order_by(Call.call_date.desc()).limit(limit).offset(offset)
+    )
+    items = []
+    for row in rows:
+        call = await db.get(Call, row[0])
+        qr_result = await db.execute(
+            select(QuestionnaireResponse).where(QuestionnaireResponse.call_id == call.id)
+        )
+        qr = qr_result.scalar_one_or_none()
+        items.append({
+            "call_id": call.id,
+            "order_id": call.order_id,
+            "operator_id": call.operator_id,
+            "call_date": call.call_date,
+            "duration_sec": call.duration_sec,
+            "processing_status": call.processing_status,
+            "call_type": call.call_type,
+            "total_score": qr.total_score if qr else None,
+            "created_at": call.created_at,
+        })
+
+    return {"total": total, "items": items}
 
 
 class CallCreate(BaseModel):
@@ -163,6 +229,31 @@ async def get_call_results(call_id: int, db: AsyncSession = Depends(get_db)):
     if qr is None:
         # processing_status=done но анкеты нет — что-то пошло не так
         return {"call_id": call_id, "status": "error", "error": "Questionnaire missing after processing"}
+
+
+# --------------------------------------------------------------------------- #
+# POST /calls/{call_id}/reprocess  — переобработать звонок заново
+# --------------------------------------------------------------------------- #
+@router.post("/{call_id}/reprocess", status_code=202)
+async def reprocess_call(
+    call_id: int,
+    background_tasks: BackgroundTasks,
+    db: AsyncSession = Depends(get_db),
+):
+    call = await db.get(Call, call_id)
+    if not call:
+        raise HTTPException(status_code=404, detail="Call not found")
+    if not call.audio_url:
+        raise HTTPException(status_code=400, detail="Call has no audio_url to reprocess")
+
+    call.processing_status = "pending"
+    call.processing_error = None
+    await db.commit()
+
+    from app.tasks import _process_call_async
+    background_tasks.add_task(_process_call_async, call.id, call.audio_url, call.language or "ka")
+
+    return {"call_id": call_id, "status": "queued"}
 
     q_fields = [
         "q1_1", "q1_2", "q1_3",

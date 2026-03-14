@@ -19,6 +19,12 @@ class Settings(BaseSettings):
     # Redis / Celery
     redis_url: str = "redis://redis:6379/0"
 
+    # Auth — API-ключ для защиты всех эндпоинтов
+    api_key: str = ""
+
+    # Monitoring
+    sentry_dsn: str = ""
+
     @property
     def async_database_url(self) -> str:
         """Для SQLAlchemy async engine."""
